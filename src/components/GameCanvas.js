@@ -5,15 +5,15 @@ import { useEffect, useRef } from "react";
 const GameCanvas = () => {
   const canvasRef = useRef(null);
 
-  // ESTADO DO JOGO (usando useRef para performance no loop)
   const gameRef = useRef({
-    state: "START", // Pode ser: START, PLAYING, GAME_OVER
+    state: "START",
     score: 0,
     gravity: 0.6,
-    speed: 5,
+    speed: 6,
+    obstacles: [],
+    nextObstacleTime: 0,
   });
 
-  // ESTADO DO PLAYER
   const playerRef = useRef({
     x: 100,
     y: 200,
@@ -29,7 +29,6 @@ const GameCanvas = () => {
     const ctx = canvas.getContext("2d");
     let animationFrameId;
 
-    // Ajusta o canvas para o tamanho da tela
     const setCanvasSize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -37,84 +36,203 @@ const GameCanvas = () => {
     setCanvasSize();
     window.addEventListener("resize", setCanvasSize);
 
-    // Função para reiniciar o jogo
+    const getBoundaries = () => ({
+      top: 50,
+      bottom: canvas.height - 50,
+    });
+
     const resetGame = () => {
       playerRef.current.y = canvas.height / 2;
       playerRef.current.dy = 0;
       gameRef.current.score = 0;
+      gameRef.current.speed = 6;
       gameRef.current.state = "PLAYING";
+      gameRef.current.obstacles = [];
+      gameRef.current.nextObstacleTime = 0;
     };
 
-    // --- O GAME LOOP (Roda 60x por segundo) ---
-    const render = () => {
-      const { state } = gameRef.current;
-      const player = playerRef.current;
+    const spawnObstacle = () => {
+      const { width } = canvas;
+      const { top, bottom } = getBoundaries();
+      const type = Math.random() > 0.5 ? "floor" : "ceiling";
 
-      // 1. Limpar a tela
+      const obstacle = {
+        x: width,
+        y: type === "floor" ? bottom - 50 : top,
+        width: 30,
+        height: 50,
+        type: type,
+        passed: false,
+      };
+
+      gameRef.current.obstacles.push(obstacle);
+    };
+
+    const checkCollision = (player, obstacle) => {
+      const hitBoxX = player.x + 5;
+      const hitBoxY = player.y + 5;
+      const hitBoxW = player.width - 10;
+      const hitBoxH = player.height - 10;
+
+      return (
+        hitBoxX < obstacle.x + obstacle.width &&
+        hitBoxX + hitBoxW > obstacle.x &&
+        hitBoxY < obstacle.y + obstacle.height &&
+        hitBoxY + hitBoxH > obstacle.y
+      );
+    };
+
+    // --- FUNÇÃO DE DESENHO (VERSÃO FINAL: ESPINHOS) ---
+    const drawScene = (boundaries) => {
+      // 1. Linhas do Chão e Teto
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 2;
+
+      // Teto
+      ctx.beginPath();
+      ctx.moveTo(0, boundaries.top);
+      ctx.lineTo(canvas.width, boundaries.top);
+      ctx.stroke();
+
+      // Chão
+      ctx.beginPath();
+      ctx.moveTo(0, boundaries.bottom);
+      ctx.lineTo(canvas.width, boundaries.bottom);
+      ctx.stroke();
+
+      // 2. Obstáculos (Espinhos)
+      if (gameRef.current.obstacles.length > 0) {
+        gameRef.current.obstacles.forEach((obs) => {
+          ctx.fillStyle = "#ff4d4d"; // Vermelho Perigo
+          ctx.beginPath(); // Começa o desenho do triângulo
+
+          if (obs.type === "floor") {
+            // Espinho de Chão (Aponta pra cima)
+            // Base Esquerda
+            ctx.moveTo(obs.x, obs.y + obs.height);
+            // Ponta (Topo)
+            ctx.lineTo(obs.x + obs.width / 2, obs.y);
+            // Base Direita
+            ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+          } else {
+            // Espinho de Teto (Aponta pra baixo)
+            // Base Esquerda
+            ctx.moveTo(obs.x, obs.y);
+            // Ponta (Baixo)
+            ctx.lineTo(obs.x + obs.width / 2, obs.y + obs.height);
+            // Base Direita
+            ctx.lineTo(obs.x + obs.width, obs.y);
+          }
+
+          ctx.closePath(); // Fecha a forma geometricamente
+          ctx.fill(); // Preenche de vermelho
+        });
+      }
+    };
+
+    const render = () => {
+      const game = gameRef.current;
+      const player = playerRef.current;
+      const boundaries = getBoundaries();
+
+      // Limpa tudo
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 2. Fundo
+      // Fundo Preto
       ctx.fillStyle = "#1a1a1a";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (state === "START") {
-        // TELA DE MENU
+      if (game.state === "START") {
+        drawScene(boundaries);
         ctx.fillStyle = "white";
-        ctx.font = "30px Arial";
         ctx.textAlign = "center";
+        ctx.font = "30px Arial";
         ctx.fillText("GRAVITY FLIP", canvas.width / 2, canvas.height / 2 - 20);
-        ctx.font = "20px Arial";
+        ctx.font = "16px Arial";
         ctx.fillText(
-          "Pressione Espaço ou Toque para Jogar",
+          "Espaço ou Clique para começar",
           canvas.width / 2,
           canvas.height / 2 + 20,
         );
-      } else if (state === "PLAYING") {
-        // LÓGICA DO JOGO
-
-        // Aplicar Gravidade
-        player.dy += gameRef.current.gravity;
+      } else if (game.state === "PLAYING") {
+        player.dy += game.gravity;
         player.y += player.dy;
 
-        // Colisão com Chão e Teto (Simples)
-        if (player.y + player.height > canvas.height) {
-          player.y = canvas.height - player.height;
+        if (player.y + player.height > boundaries.bottom) {
+          player.y = boundaries.bottom - player.height;
           player.dy = 0;
-          player.onGround = true;
-        } else if (player.y < 0) {
-          player.y = 0;
+        } else if (player.y < boundaries.top) {
+          player.y = boundaries.top;
           player.dy = 0;
-          player.onGround = true;
         }
 
-        // Desenhar Player
+        game.nextObstacleTime--;
+        if (game.nextObstacleTime <= 0) {
+          spawnObstacle();
+          game.nextObstacleTime = Math.random() * 60 + 60;
+        }
+
+        game.obstacles.forEach((obs, index) => {
+          obs.x -= game.speed;
+
+          if (checkCollision(player, obs)) {
+            game.state = "GAME_OVER";
+          }
+          if (obs.x + obs.width < 0) {
+            game.obstacles.splice(index, 1);
+          }
+        });
+
+        drawScene(boundaries);
+
+        // Player
         ctx.fillStyle = player.color;
         ctx.fillRect(player.x, player.y, player.width, player.height);
 
-        // Score (Falso por enquanto)
-        gameRef.current.score++;
+        // Score
+        game.score++;
         ctx.fillStyle = "white";
         ctx.textAlign = "left";
+        ctx.font = "20px Arial";
+        ctx.fillText(`Score: ${Math.floor(game.score / 10)}`, 20, 40);
+      } else if (game.state === "GAME_OVER") {
+        drawScene(boundaries);
+
+        ctx.fillStyle = player.color;
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "red";
+        ctx.textAlign = "center";
+        ctx.font = "40px Arial";
+        ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2);
+
+        ctx.fillStyle = "white";
+        ctx.font = "20px Arial";
         ctx.fillText(
-          `Score: ${Math.floor(gameRef.current.score / 10)}`,
-          20,
-          40,
+          "Clique para tentar de novo",
+          canvas.width / 2,
+          canvas.height / 2 + 50,
+        );
+        ctx.fillText(
+          `Score Final: ${Math.floor(game.score / 10)}`,
+          canvas.width / 2,
+          canvas.height / 2 + 80,
         );
       }
 
       animationFrameId = requestAnimationFrame(render);
     };
 
-    // --- CONTROLES ---
     const handleInput = (e) => {
-      if (e.code === "Space") e.preventDefault(); // Não rolar a tela
-
+      if (e.code === "Space") e.preventDefault();
       const { state } = gameRef.current;
 
-      if (state === "START") {
+      if (state === "START" || state === "GAME_OVER") {
         resetGame();
       } else if (state === "PLAYING") {
-        // INVERTER GRAVIDADE!
         gameRef.current.gravity *= -1;
       }
     };
@@ -125,7 +243,6 @@ const GameCanvas = () => {
     window.addEventListener("touchstart", handleInput);
     window.addEventListener("mousedown", handleInput);
 
-    // Iniciar
     render();
 
     return () => {
